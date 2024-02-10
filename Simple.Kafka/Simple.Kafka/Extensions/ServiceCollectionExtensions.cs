@@ -4,6 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Simple.Kafka.Consumer;
+using Simple.Kafka.Producer;
 using Simple.Kafka.Settings;
 
 namespace Simple.Kafka.Extensions;
@@ -30,6 +31,17 @@ public static class ServiceCollectionExtensions
         services.Configure<SimpleKafkaSettings>(configuration.GetSection("SimpleKafka"));
         services.AddMediatR(cfg => cfg.RegisterServicesFromAssemblies(assemblies));
         services.AddHostedService<KafkaConsumerHostedService>();
+
+        return services;
+    }
+
+    public static IServiceCollection AddKafkaProducer<TKey, TValue>(this IServiceCollection services)
+    {
+        services.AddSingleton<IKafkaProducer<TKey, TValue>>((provider) =>
+        {
+            var options = provider.GetRequiredService<IOptions<SimpleKafkaSettings>>();
+            return new KafkaProducer<TKey, TValue>(options);
+        });
 
         return services;
     }
