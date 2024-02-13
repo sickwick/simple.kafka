@@ -4,6 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Simple.Kafka.Extensions;
+using Simple.Kafka.Producer;
 using Simple.Kafka.Serializers;
 using Simple.Kafka.Settings;
 
@@ -17,12 +18,14 @@ public class KafkaConsumer<TEvent> : IKafkaConsumer
     private readonly ILogger _logger;
     private readonly IServiceProvider _serviceProvider;
     private ConsumerConfig _consumerConfig;
+    private readonly IRetryProducerService _producerService;
 
     public KafkaConsumer(IOptions<SimpleKafkaSettings> settings, ILogger<KafkaConsumer<TEvent>> logger,
-        IServiceProvider serviceProvider)
+        IServiceProvider serviceProvider, IRetryProducerService producerService)
     {
         _logger = logger;
         _serviceProvider = serviceProvider;
+        _producerService = producerService;
         _settings = settings.Value;
 
         if (!_settings.Consumers.TryGetValue(typeof(TEvent).Name, out _consumerSettings))
@@ -58,9 +61,10 @@ public class KafkaConsumer<TEvent> : IKafkaConsumer
     private async Task ProcessEventAsync(IConsumer<byte[], TEvent> consumer, string name,
         CancellationToken cancellationToken)
     {
+        ConsumeResult<byte[], TEvent> kafkaEvent = new();
         try
         {
-            var kafkaEvent = consumer.Consume(cancellationToken);
+            kafkaEvent = consumer.Consume(cancellationToken);
 
             if (kafkaEvent is null) return;
 
@@ -78,6 +82,21 @@ public class KafkaConsumer<TEvent> : IKafkaConsumer
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error while working with event");
+
+            if (_consumerSettings.RetryTopics is null or { Length: 0 })
+            {
+                return;
+            }
+
+            try
+            {
+                await _producerService.SendToRetryAsync(kafkaEvent, _consumerSettings.RetryTopics, cancellationToken);
+            }
+            catch (Exception e)
+            {
+                _logger.LogError(ex, "Error while send to reply");
+            }
+
         }
     }
 
@@ -95,14 +114,20 @@ public class KafkaConsumer<TEvent> : IKafkaConsumer
             .SetValueDeserializer(new JsonDeserializer<TEvent>())
             .Build();
 
-        consumer.Subscribe(_consumerSettings.Topic);
+        var topics = new List<string> { _consumerSettings.Topic };
+        if (_consumerSettings.RetryTopics is not null and { Length: > 0 })
+        {
+            topics.AddRange(_consumerSettings.RetryTopics);
+        }
+        
+        consumer.Subscribe(topics);
 
         return consumer;
     }
 
     private void BuildConfiguration()
     {
-        var nativeConfig = _consumerSettings.NativeConfig;
+        var nativeConfig = _consumerSettings.NativeConfig ?? new Dictionary<string, string>();
 
         if (_consumerSettings.IsSharedNativeConfigEnabled)
         {

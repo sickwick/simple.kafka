@@ -28,10 +28,14 @@ public class KafkaProducer<TKey, TValue> : IKafkaProducer<TKey, TValue>
         _producer = CreateProducer();
     }
 
-    public async Task<DeliveryResult<byte[], TValue>> ProduceAsync(TKey key, TValue value, CancellationToken cancellationToken,Headers? headers = null)
+    public async Task<DeliveryResult<byte[], TValue>> ProduceAsync(
+        TKey key,
+        TValue value,
+        CancellationToken cancellationToken,
+        Headers? headers = null)
     {
         headers ??= new Headers();
-        
+
         var message = new Message<byte[], TValue>()
         {
             Key = Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(key)),
@@ -51,9 +55,9 @@ public class KafkaProducer<TKey, TValue> : IKafkaProducer<TKey, TValue>
         return producer;
     }
 
-    public void BuildConfiguration()
+    private void BuildConfiguration()
     {
-        var nativeConfig = _producerSettings.NativeConfig;
+        var nativeConfig = _producerSettings.NativeConfig ?? new Dictionary<string, string>();
 
         if (_producerSettings.IsSharedNativeConfigEnabled)
         {
