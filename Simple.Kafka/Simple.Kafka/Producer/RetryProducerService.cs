@@ -1,5 +1,6 @@
 using Confluent.Kafka;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 namespace Simple.Kafka.Producer;
 
@@ -7,11 +8,13 @@ public class RetryProducerService : IRetryProducerService
 {
     private readonly IServiceProvider _serviceProvider;
     private readonly IRetryProducerFactory _producerFactory;
+    private readonly ILogger<RetryProducerService> _logger;
 
-    public RetryProducerService(IServiceProvider serviceProvider, IRetryProducerFactory producerFactory)
+    public RetryProducerService(IServiceProvider serviceProvider, IRetryProducerFactory producerFactory, ILogger<RetryProducerService> logger)
     {
         _serviceProvider = serviceProvider;
         _producerFactory = producerFactory;
+        _logger = logger;
     }
 
     public async Task SendToRetryAsync<TEvent>(
@@ -23,6 +26,7 @@ public class RetryProducerService : IRetryProducerService
 
         if (nextTopic is null)
         {
+            _logger.LogWarning("Не найден топик повтора");
             return;
         }
 

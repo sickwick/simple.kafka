@@ -21,8 +21,9 @@ public static class ServiceCollectionExtensions
             var settings = provider.GetRequiredService<IOptions<SimpleKafkaSettings>>();
             var logger = provider.GetRequiredService<ILogger<KafkaConsumer<TEvent>>>();
             var retryService = provider.GetRequiredService<IRetryProducerService>();
+            var delayCalculator = provider.GetRequiredService<IDelayCalculator>();
 
-            return new KafkaConsumer<TEvent>(settings, logger, provider, retryService);
+            return new KafkaConsumer<TEvent>(settings, logger, provider, retryService, delayCalculator);
         });
 
         var settings = configuration.GetSection(SettingName).Get<SimpleKafkaSettings>();
@@ -33,8 +34,6 @@ public static class ServiceCollectionExtensions
         {
             return services;
         }
-
-        // services.AddKafkaReplyProducer<byte[], TEvent>(consumer.RetryTopics);
 
         return services;
     }
@@ -48,6 +47,7 @@ public static class ServiceCollectionExtensions
         services.Configure<SimpleKafkaSettings>(configuration.GetSection(SettingName));
         services.AddMediatR(cfg => cfg.RegisterServicesFromAssemblies(assemblies));
         services.AddHostedService<KafkaConsumerHostedService>();
+        services.AddSingleton<IDelayCalculator, DelayCalculator>();
 
         return services;
     }
@@ -63,20 +63,6 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IRetryProducerFactory, RetryProducerFactory>();
         services.AddSingleton<IRetryProducerService, RetryProducerService>();
 
-        return services;
-    }
-    
-    public static IServiceCollection AddKafkaReplyProducer<TKey, TValue>(this IServiceCollection services, params string[] topics)
-    {
-        foreach (var topic in topics)
-        {
-           services.TryAddEnumerable(ServiceDescriptor.KeyedSingleton<IRetryKafkaProducer<TKey, TValue>>(topic, (provider, _) =>
-           {
-               var options = provider.GetRequiredService<IOptions<SimpleKafkaSettings>>();
-               return new RetryKafkaProducer<TKey, TValue>(topic, options);
-           }));
-        }
-        
         return services;
     }
 }

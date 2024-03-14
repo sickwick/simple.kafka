@@ -19,14 +19,18 @@ public class KafkaConsumer<TEvent> : IKafkaConsumer
     private readonly IServiceProvider _serviceProvider;
     private ConsumerConfig _consumerConfig;
     private readonly IRetryProducerService _producerService;
+    private readonly IDelayCalculator _delayCalculator;
+    private readonly List<Task> _tasks;
 
     public KafkaConsumer(IOptions<SimpleKafkaSettings> settings, ILogger<KafkaConsumer<TEvent>> logger,
-        IServiceProvider serviceProvider, IRetryProducerService producerService)
+        IServiceProvider serviceProvider, IRetryProducerService producerService, IDelayCalculator delayCalculator)
     {
         _logger = logger;
         _serviceProvider = serviceProvider;
         _producerService = producerService;
+        _delayCalculator = delayCalculator;
         _settings = settings.Value;
+        _tasks = new List<Task>(100);
 
         if (!_settings.Consumers.TryGetValue(typeof(TEvent).Name, out _consumerSettings))
         {
@@ -49,7 +53,19 @@ public class KafkaConsumer<TEvent> : IKafkaConsumer
 
             while (!cancellationToken.IsCancellationRequested)
             {
-                await ProcessEventAsync(consumer, name, cancellationToken);
+                if (_tasks.Count(c => c is
+                        { IsCompleted: false, IsCanceled: false, IsFaulted: false, IsCompletedSuccessfully: false }) <
+                    50)
+                {
+                    var task = Task.Run(async () => { await ProcessEventAsync(consumer, name, cancellationToken); },
+                        cancellationToken);
+                    _tasks.Add(task);
+                }
+                else
+                {
+                    await Task.Delay(5000, cancellationToken);
+                    _tasks.RemoveAll(c => c.IsCanceled || c.IsCompleted || c.IsFaulted || c.IsCompletedSuccessfully);
+                }
             }
         }
         catch (Exception ex)
@@ -62,11 +78,26 @@ public class KafkaConsumer<TEvent> : IKafkaConsumer
         CancellationToken cancellationToken)
     {
         ConsumeResult<byte[], TEvent> kafkaEvent = new();
+        var paused = false;
         try
         {
             kafkaEvent = consumer.Consume(cancellationToken);
 
             if (kafkaEvent is null) return;
+
+            if (_consumerSettings.RetryTopics.Contains(kafkaEvent.Topic))
+            {
+                var delayTime =
+                    _delayCalculator.Calculate(kafkaEvent.Message.Timestamp, GetBackoffMultiplier(kafkaEvent.Topic),
+                        _consumerSettings.InitialDelay);
+                if (delayTime > DateTimeOffset.UtcNow)
+                {
+                    paused = true;
+                    var partitions = new List<TopicPartition>() { kafkaEvent.TopicPartition };
+                    consumer.Pause(partitions);
+                    await DelayTillRetryTime(delayTime, cancellationToken);
+                }
+            }
 
             _logger.LogDebug("{0}: New message consumed", name);
 
@@ -81,7 +112,7 @@ public class KafkaConsumer<TEvent> : IKafkaConsumer
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error while working with event");
+            // _logger.LogError(ex, "Error while working with event");
 
             if (_consumerSettings.RetryTopics is null or { Length: 0 })
             {
@@ -94,9 +125,13 @@ public class KafkaConsumer<TEvent> : IKafkaConsumer
             }
             catch (Exception e)
             {
-                _logger.LogError(ex, "Error while send to reply");
+                _logger.LogError(e, "Error while send to reply");
             }
-
+        }
+        finally
+        {
+            if (paused)
+                consumer.Resume(new List<TopicPartition>() { kafkaEvent.TopicPartition });
         }
     }
 
@@ -119,7 +154,7 @@ public class KafkaConsumer<TEvent> : IKafkaConsumer
         {
             topics.AddRange(_consumerSettings.RetryTopics);
         }
-        
+
         consumer.Subscribe(topics);
 
         return consumer;
@@ -141,5 +176,15 @@ public class KafkaConsumer<TEvent> : IKafkaConsumer
         };
 
         _consumerConfig = consumerConfig;
+    }
+
+    private int GetBackoffMultiplier(string topicName)
+        => Array.IndexOf(_consumerSettings.RetryTopics, topicName) + 1;
+
+    private static async Task DelayTillRetryTime(DateTimeOffset delayTime, CancellationToken cancellationToken)
+    {
+        var delayTimespan = delayTime - DateTimeOffset.UtcNow;
+        var delayMs = Math.Max(Convert.ToInt32(delayTimespan.TotalMilliseconds), 0);
+        await Task.Delay(delayMs, cancellationToken);
     }
 }

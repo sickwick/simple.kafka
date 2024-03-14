@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using Confluent.Kafka;
 
 namespace Simple.Kafka.Settings;
 
@@ -18,4 +19,6 @@ public record SimpleKafkaConsumerSettings
     public IDictionary<string, string> RetryProducerNativeConfig { get; init; }
     
     public bool IsSharedRetryProducerNativeConfigEnabled { get; init; }
+
+    public TimeSpan InitialDelay { get; init; }
 }
