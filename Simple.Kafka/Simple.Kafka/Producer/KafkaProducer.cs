@@ -43,7 +43,7 @@ public class KafkaProducer<TKey, TValue> : IKafkaProducer<TKey, TValue>
             Headers = headers
         };
         
-        return  await _producer.ProduceAsync(_producerSettings.Topic, message, cancellationToken);
+        return  await _producer.ProduceAsync(_producerSettings.Topic, message);
     }
 
     private IProducer<byte[], TValue> CreateProducer()

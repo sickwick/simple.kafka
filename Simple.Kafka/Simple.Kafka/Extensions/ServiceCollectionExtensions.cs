@@ -21,18 +21,43 @@ public static class ServiceCollectionExtensions
             var settings = provider.GetRequiredService<IOptions<SimpleKafkaSettings>>();
             var logger = provider.GetRequiredService<ILogger<KafkaConsumer<TEvent>>>();
             var retryService = provider.GetRequiredService<IRetryProducerService>();
-            var delayCalculator = provider.GetRequiredService<IDelayCalculator>();
 
-            return new KafkaConsumer<TEvent>(settings, logger, provider, retryService, delayCalculator);
+            return new KafkaConsumer<TEvent>(settings, logger, provider, retryService);
         });
 
         var settings = configuration.GetSection(SettingName).Get<SimpleKafkaSettings>();
 
-        if (settings is null
-            || !settings.Consumers.TryGetValue(typeof(TEvent).Name, out var consumer)
-            || consumer.RetryTopics is null or {Length: 0})
+        if (settings is not null
+            && settings.Consumers.TryGetValue(typeof(TEvent).Name, out var consumer)
+            && consumer.RetryTopics is not null or {Length: > 0})
         {
-            return services;
+            services.AddSingleton<IKafkaConsumer>((provider) =>
+            {
+                var settings = provider.GetRequiredService<IOptions<SimpleKafkaSettings>>();
+                var logger = provider.GetRequiredService<ILogger<KafkaConsumer<TEvent>>>();
+                var retryService = provider.GetRequiredService<IRetryProducerService>();
+                var delayCalculator = provider.GetRequiredService<IDelayCalculator>();
+
+                return new KafkaRetryConsumer<TEvent>(settings, logger, provider, retryService, delayCalculator)
+                {
+                    Topics = consumer.RetryTopics.ToList()
+                };
+            });
+            // foreach (var topic in consumer.RetryTopics)
+            // {
+            //     services.AddSingleton<IKafkaConsumer>((provider) =>
+            //     {
+            //         var settings = provider.GetRequiredService<IOptions<SimpleKafkaSettings>>();
+            //         var logger = provider.GetRequiredService<ILogger<KafkaConsumer<TEvent>>>();
+            //         var retryService = provider.GetRequiredService<IRetryProducerService>();
+            //         var delayCalculator = provider.GetRequiredService<IDelayCalculator>();
+            //
+            //         return new KafkaRetryConsumer<TEvent>(settings, logger, provider, retryService, delayCalculator)
+            //         {
+            //             Topic = topic
+            //         };
+            //     });
+            // }
         }
 
         return services;

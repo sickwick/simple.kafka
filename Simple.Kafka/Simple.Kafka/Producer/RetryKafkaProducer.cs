@@ -31,7 +31,7 @@ public class RetryKafkaProducer<TKey, TValue> : IRetryKafkaProducer<TKey, TValue
             Headers = message.Headers
         };
         
-        var result =  await producer.ProduceAsync(TopicName, newMessage, cancellationToken); 
+        var result =  await producer.ProduceAsync(TopicName, newMessage); 
         // TODO: add logging
     }
 
